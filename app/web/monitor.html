@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>直播监控</title>
+<style>
+  :root{
+    --cols:3; --rows:3; --gap:3px; --radius:2px; --bg:#07080a; --fit:cover;
+    --accent:#fb7299; --accent-w:2px; --dim:.6; --lines:2;
+    --cell-font:15px; --osd-h:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    overflow:hidden;                 /* 监控画面永远不出现滚动条 */
+    background:var(--bg); color:#fff;
+    font-family:"Microsoft YaHei","PingFang SC","Hiragino Sans GB","Noto Sans SC",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    user-select:none; -webkit-user-select:none;
+  }
+  #grid{
+    position:fixed; inset:0;
+    display:grid;
+    grid-template-columns:repeat(var(--cols),minmax(0,1fr));
+    grid-template-rows:repeat(var(--rows),minmax(0,1fr));
+    gap:var(--gap);
+    overflow:hidden;
+  }
+  .cell{
+    position:relative; overflow:hidden; background:#101216;
+    border-radius:var(--radius);
+    contain:layout paint;
+  }
+  .cell .pic{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:var(--fit);        /* 不拉伸：铺满就裁切 */
+    object-position:center;
+    display:block; -webkit-user-drag:none;
+  }
+  .cell.off .pic{ filter:brightness(var(--dim)); }
+
+  /* 直播中的强调边框 */
+  .ring{
+    position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    box-shadow:inset 0 0 0 var(--accent-w) var(--accent);
+    opacity:0; transition:opacity .18s linear;
+  }
+  .cell.live .ring{ opacity:1; }
+
+  /* 底部渐变，保证标题可读 */
+  .shade{
+    position:absolute; left:0; right:0; bottom:0; height:58%;
+    background:linear-gradient(to top,rgba(0,0,0,.88) 0%,rgba(0,0,0,.5) 42%,rgba(0,0,0,0) 100%);
+    opacity:0; transition:opacity .18s linear; pointer-events:none;
+  }
+  .cell.live .shade{ opacity:1; }
+
+  .meta{
+    position:absolute; left:0; right:0; bottom:0;
+    padding:0 .5em .34em;
+    display:flex; flex-direction:column; gap:.1em;
+    font-size:var(--cell-font); line-height:1.28;
+    opacity:0; transition:opacity .18s linear; pointer-events:none;
+  }
+  .cell.live .meta{ opacity:1; }
+  .title{
+    font-weight:700; letter-spacing:.01em;
+    text-shadow:0 .06em .2em rgba(0,0,0,.95);
+    display:-webkit-box; -webkit-box-orient:vertical;
+    -webkit-line-clamp:var(--lines); overflow:hidden; word-break:break-word;
+  }
+  .sub{
+    display:flex; align-items:center; gap:.32em;
+    font-size:.76em; font-weight:400; color:rgba(255,255,255,.72);
+    text-shadow:0 .06em .2em rgba(0,0,0,.95);
+  }
+  .sub .anchor{ max-width:55%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dot{
+    width:.42em; height:.42em; border-radius:50%; background:var(--accent);
+    flex:none; animation:pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.28} }
+
+  /* 未开播：只留一行很淡的主播名 */
+  .meta.offline{
+    opacity:.42;
+    font-size:calc(var(--cell-font) * .78);
+  }
+  .meta.offline .title{
+    font-weight:500; -webkit-line-clamp:1;
+    text-shadow:none;
+  }
+
+  /* 数字 OSD（通道号 / 时间戳），用工作区里的 0-9 图片绘制 */
+  .osd{
+    position:absolute; display:flex; align-items:center;
+    font-size:var(--osd-h); line-height:1;
+    pointer-events:none; text-shadow:0 .1em .25em rgba(0,0,0,.9);
+  }
+  .osd .num{ display:flex; align-items:center; }
+  .osd .d{ height:1em; width:auto; display:block; }
+  .osd .t{
+    font-weight:600; font-size:.74em; letter-spacing:.06em;
+    color:#fff; margin-right:.28em;
+  }
+  .osd .colon{
+    position:relative; display:inline-block; width:.3em; height:1em; flex:none;
+  }
+  .osd .colon::before,.osd .colon::after{
+    content:''; position:absolute; left:50%; width:.15em; height:.15em;
+    border-radius:50%; background:#fff; transform:translateX(-50%);
+  }
+  .osd .colon::before{ top:.24em; }
+  .osd .colon::after{ bottom:.24em; }
+  .osd.tl{ top:.42em; left:.5em; }
+  .osd.br{ right:.5em; bottom:.34em; }
+  .osd.empty{ display:none; }
+
+  /* 服务端失联时才出现的小红点 */
+  #dead{
+    position:fixed; top:6px; right:6px; width:9px; height:9px; border-radius:50%;
+    background:#ff4d4f; box-shadow:0 0 8px rgba(255,77,79,.9);
+    opacity:0; transition:opacity .3s; pointer-events:none; z-index:9;
+  }
+  #dead.on{ opacity:1; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<div id="dead" title="与服务端失去连接"></div>
+<script>
+(function(){
+  "use strict";
+
+  var grid = document.getElementById('grid');
+  var dead = document.getElementById('dead');
+  var params = new URLSearchParams(location.search);
+
+  var cfg = { cols:3, rows:3, gap:3, radius:2, background:'#07080a', fit:'cover' };
+  var ui  = { show_title:true, show_anchor:true, show_online:true, show_status_dot:true,
+              show_channel:true, show_timestamp:true, title_lines:2, title_size:15,
+              refresh_interval:3, offline_dim:.6, live_accent:'#fb7299', live_accent_width:2,
+              clock_24h:true, osd_scale:1 };
+  var hasDigits = false;
+  var cellMap = {};          // uid -> {el, img, ...}
+  var order = [];
+  var signature = '';
+  var timer = null;
+  var fails = 0;
+
+  function num(v, def){ v = parseFloat(v); return isFinite(v) ? v : def; }
+
+  function applyVars(){
+    var s = document.documentElement.style;
+    s.setProperty('--cols', cfg.cols);
+    s.setProperty('--rows', cfg.rows);
+    s.setProperty('--gap', cfg.gap + 'px');
+    s.setProperty('--radius', cfg.radius + 'px');
+    s.setProperty('--bg', cfg.background);
+    s.setProperty('--fit', cfg.fit);
+    s.setProperty('--accent', ui.live_accent);
+    s.setProperty('--accent-w', ui.live_accent_width + 'px');
+    s.setProperty('--dim', ui.offline_dim);
+    s.setProperty('--lines', ui.title_lines);
+  }
+
+  function fitText(){
+    var w = grid.clientWidth || window.innerWidth;
+    var h = grid.clientHeight || window.innerHeight;
+    var cellW = w / cfg.cols;
+    var cellH = h / cfg.rows;
+    var scale = cellW / (1920 / cfg.cols);          // 以 1920 宽、当前列数为基准
+    var font = Math.max(9, Math.min(52, ui.title_size * scale));
+    var osd = Math.max(8, Math.min(30, (cellH / 24) * ui.osd_scale));
+    var s = document.documentElement.style;
+    s.setProperty('--cell-font', font.toFixed(2) + 'px');
+    s.setProperty('--osd-h', osd.toFixed(2) + 'px');
+  }
+
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+
+  function clockText(ts){
+    if (!ts) return '';
+    var d = new Date(ts * 1000);
+    var hh = d.getHours(), mm = pad(d.getMinutes()), ss = pad(d.getSeconds());
+    if (!ui.clock_24h){
+      var ap = hh < 12 ? 'AM' : 'PM';
+      hh = hh % 12; if (hh === 0) hh = 12;
+      return pad(hh) + ':' + mm + ':' + ss + ' ' + ap;
+    }
+    return pad(hh) + ':' + mm + ':' + ss;
+  }
+
+  function channelText(i){
+    var s = String(i);
+    while (s.length < 2) s = '0' + s;
+    return s;
+  }
+
+  function osdHtml(text){
+    var out = '', i, ch;
+    for (i = 0; i < text.length; i++){
+      ch = text.charAt(i);
+      if (ch >= '0' && ch <= '9' && hasDigits){
+        out += '<img class="d" src="/assets/digits/' + ch + '.png" alt="' + ch + '" draggable="false">';
+      } else if (ch === ':') {
+        out += '<i class="colon"></i>';
+      } else if (ch === ' ') {
+        out += '<b class="t">&nbsp;</b>';
+      } else {
+        out += '<b class="t">' + ch + '</b>';
+      }
+    }
+    return out;
+  }
+
+  function fmtOnline(n){
+    n = num(n, 0);
+    if (n >= 100000000) return (n / 100000000).toFixed(1) + '亿';
+    if (n >= 10000) return (n / 10000).toFixed(1) + '万';
+    return String(Math.round(n));
+  }
+
+  function makeCell(){
+    var el = document.createElement('div');
+    el.className = 'cell off';
+    el.innerHTML =
+      '<img class="pic" alt="" draggable="false">' +
+      '<div class="shade"></div>' +
+      '<div class="osd tl empty"><span class="num"></span></div>' +
+      '<div class="meta"><div class="title"></div>' +
+      '<div class="sub"><i class="dot"></i><span class="anchor"></span>' +
+      '<span class="sep">·</span><span class="online"></span></div></div>' +
+      '<div class="osd br empty"><span class="num"></span></div>' +
+      '<div class="ring"></div>';
+    var refs = {
+      el: el,
+      img: el.querySelector('.pic'),
+      title: el.querySelector('.title'),
+      sub: el.querySelector('.sub'),
+      anchor: el.querySelector('.anchor'),
+      online: el.querySelector('.online'),
+      sep: el.querySelector('.sep'),
+      dot: el.querySelector('.dot'),
+      meta: el.querySelector('.meta'),
+      osdTl: el.querySelector('.osd.tl'),
+      osdTlNum: el.querySelector('.osd.tl .num'),
+      osdBr: el.querySelector('.osd.br'),
+      osdBrNum: el.querySelector('.osd.br .num')
+    };
+    el.addEventListener('dblclick', toggleFullscreen);
+    return refs;
+  }
+
+  function buildCells(rooms){
+    grid.innerHTML = '';
+    cellMap = {};
+    order = [];
+    var slots = cfg.cols * cfg.rows;
+    var shown = rooms.slice(0, slots);
+    if (rooms.length > slots){
+      console.warn('房间数 ' + rooms.length + ' 超过宫格容量 ' + slots + '，多余的没有显示。到后台调大行列数。');
+    }
+    shown.forEach(function(room, index){
+      var refs = makeCell();
+      refs.index = index + 1;
+      refs.uid = room.uid;
+      refs.lastSrc = '';
+      refs.lastOsd = null;
+      grid.appendChild(refs.el);
+      cellMap[room.uid] = refs;
+      order.push(room.uid);
+    });
+    for (var i = shown.length; i < slots; i++){
+      var empty = document.createElement('div');
+      empty.className = 'cell empty';
+      grid.appendChild(empty);
+    }
+  }
+
+  function updateCell(refs, room, index){
+    var live = !!room.live;
+    var cls = 'cell ' + (live ? 'live' : 'off');
+    if (refs.el.className !== cls) refs.el.className = cls;
+
+    if (room.image && refs.lastSrc !== room.image){
+      refs.lastSrc = room.image;
+      refs.img.src = room.image;
+    }
+
+    // 标题 / 主播 / 人气
+    var titleEl = refs.title, subEl = refs.sub;
+    if (live){
+      refs.meta.className = 'meta';
+      var t = ui.show_title ? (room.title || room.name || '') : '';
+      if (titleEl.textContent !== t) titleEl.textContent = t;
+      titleEl.style.display = t ? '' : 'none';
+      var anchor = ui.show_anchor ? (room.anchor || room.name || '') : '';
+      if (refs.anchor.textContent !== anchor) refs.anchor.textContent = anchor;
+      refs.anchor.style.display = anchor ? '' : 'none';
+      var online = ui.show_online ? fmtOnline(room.online) : '';
+      if (refs.online.textContent !== online) refs.online.textContent = online;
+      refs.online.style.display = online ? '' : 'none';
+      refs.sep.style.display = (anchor && online) ? '' : 'none';
+      refs.dot.style.display = ui.show_status_dot ? '' : 'none';
+      var showSub = !!(anchor || online);
+      subEl.style.display = showSub ? '' : 'none';
+    } else {
+      refs.meta.className = 'meta offline';
+      var line = room.name || room.anchor || room.title || '';
+      if (titleEl.textContent !== line) titleEl.textContent = line;
+      titleEl.style.display = line ? '' : 'none';
+      subEl.style.display = 'none';
+    }
+
+    // OSD：左上通道号，右下截图时间
+    var ch = ui.show_channel ? osdHtml(channelText(index)) : '';
+    if (refs.lastOsd !== 'ch:' + ch){
+      refs.lastOsd = 'ch:' + ch;
+      refs.osdTlNum.innerHTML = ch;
+      refs.osdTl.className = 'osd tl' + (ch ? '' : ' empty');
+    }
+    var stamp = (ui.show_timestamp && room.display === 'shot' && room.image_ts) ? osdHtml(clockText(room.image_ts)) : '';
+    var stampKey = 'ts:' + stamp;
+    if (refs.lastStamp !== stampKey){
+      refs.lastStamp = stampKey;
+      refs.osdBrNum.innerHTML = stamp;
+      refs.osdBr.className = 'osd br' + (stamp ? '' : ' empty');
+    }
+  }
+
+  function render(data){
+    cfg = Object.assign(cfg, data.grid || {});
+    ui = Object.assign(ui, data.ui || {});
+    if (params.has('cols')) cfg.cols = Math.max(1, Math.min(12, num(params.get('cols'), cfg.cols)));
+    if (params.has('rows')) cfg.rows = Math.max(1, Math.min(12, num(params.get('rows'), cfg.rows)));
+    if (params.has('gap')) cfg.gap = Math.max(0, num(params.get('gap'), cfg.gap));
+    if (params.has('radius')) cfg.radius = Math.max(0, num(params.get('radius'), cfg.radius));
+    if (params.has('fit')) cfg.fit = params.get('fit') === 'contain' ? 'contain' : 'cover';
+    hasDigits = !!data.has_digits;
+
+    var rooms = data.rooms || [];
+    var sig = cfg.cols + 'x' + cfg.rows + '|' + rooms.map(function(r){ return r.uid; }).join(',');
+    if (sig !== signature){
+      signature = sig;
+      applyVars();
+      buildCells(rooms);
+    }
+    fitText();
+    rooms.slice(0, cfg.cols * cfg.rows).forEach(function(room, i){
+      var refs = cellMap[room.uid];
+      if (refs) updateCell(refs, room, i + 1);
+    });
+  }
+
+  function poll(){
+    fetch('/api/state', { cache:'no-store' })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(data){
+        fails = 0; dead.classList.remove('on');
+        render(data);
+      })
+      .catch(function(err){
+        fails++;
+        if (fails >= 2) dead.classList.add('on');
+        console.warn('获取状态失败：', err.message);
+      })
+      .finally(function(){
+        var iv = Math.max(1, num(ui.refresh_interval, 3)) * 1000;
+        clearTimeout(timer);
+        timer = setTimeout(poll, iv);
+      });
+  }
+
+  function toggleFullscreen(){
+    if (!document.fullscreenElement){
+      var p = document.documentElement.requestFullscreen;
+      if (p) p.call(document.documentElement).catch(function(){});
+    } else if (document.exitFullscreen){
+      document.exitFullscreen().catch(function(){});
+    }
+  }
+
+  window.addEventListener('resize', fitText);
+  window.addEventListener('orientationchange', fitText);
+  document.addEventListener('dragstart', function(e){ e.preventDefault(); });
+
+  poll();
+})();
+</script>
+</body>
+</html>

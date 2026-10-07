@@ -1,0 +1,12 @@
+# 默认按内容自动识别文本，仓库里统一存 LF，检出时再按平台转换
+* text=auto
+
+*.py    text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.bat   text eol=crlf
+
+*.png   binary
+*.jpg   binary
+*.webp  binary

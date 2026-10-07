@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>直播监控 · 配置后台</title>
+<style>
+  *{box-sizing:border-box}
+  :root{
+    --bg:#0b0e13; --panel:#12161d; --panel2:#161b23; --line:#242c38; --line2:#2f3947;
+    --fg:#e6eaf2; --muted:#8b97a8; --accent:#fb7299; --accent2:#4aa8ff;
+    --ok:#31c48d; --warn:#f0b429; --err:#ef5350;
+  }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--fg);
+    font:14px/1.55 "Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif;}
+  a{color:var(--accent2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  header{
+    position:sticky;top:0;z-index:20;background:rgba(11,14,19,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+    padding:10px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  }
+  header .brand{font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:8px}
+  header .brand i{width:9px;height:9px;border-radius:50%;background:var(--accent);display:inline-block;
+    box-shadow:0 0 10px var(--accent)}
+  nav{display:flex;gap:4px;margin-left:8px}
+  nav button{
+    background:transparent;border:1px solid transparent;color:var(--muted);
+    padding:5px 12px;border-radius:8px;cursor:pointer;font-size:13px;font-family:inherit;
+  }
+  nav button:hover{color:var(--fg);background:var(--panel2)}
+  nav button.on{color:#fff;background:var(--panel2);border-color:var(--line2)}
+  header .spacer{flex:1}
+  .wrap{max-width:1220px;margin:0 auto;padding:18px}
+  .page{display:none}
+  .page.on{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .card > h2{margin:0 0 4px;font-size:15px;font-weight:700}
+  .card > p.hint{margin:0 0 14px;color:var(--muted);font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px 18px}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .field > label{font-size:12.5px;color:#b9c3d1;font-weight:600;display:flex;gap:6px;align-items:baseline}
+  .field .unit{color:var(--muted);font-weight:400}
+  .field .help{font-size:11.5px;color:var(--muted);line-height:1.45}
+  input[type=text],input[type=number],select,textarea{
+    background:#0d1117;border:1px solid var(--line2);border-radius:8px;
+    color:var(--fg);padding:7px 9px;font:inherit;font-size:13px;width:100%;outline:none;
+  }
+  input[type=text]:focus,input[type=number]:focus,select:focus,textarea:focus{border-color:var(--accent2)}
+  textarea{min-height:64px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:12.5px}
+  .row{display:flex;gap:8px;align-items:center}
+  .check{display:flex;align-items:center;gap:8px;font-size:13px;color:#cbd5e1}
+  input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+  input[type=color]{width:38px;height:32px;padding:2px;background:#0d1117;border:1px solid var(--line2);
+    border-radius:8px;cursor:pointer;flex:none}
+  button.btn{
+    background:var(--panel2);border:1px solid var(--line2);color:var(--fg);
+    padding:7px 13px;border-radius:8px;cursor:pointer;font:inherit;font-size:13px;white-space:nowrap;
+  }
+  button.btn:hover{border-color:#48566a;background:#1b2130}
+  button.btn.primary{background:var(--accent);border-color:var(--accent);color:#1a0a10;font-weight:700}
+  button.btn.primary:hover{filter:brightness(1.08)}
+  button.btn.ghost{background:transparent}
+  button.btn.small{padding:3px 8px;font-size:12px}
+  button.btn:disabled{opacity:.45;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+  th{color:var(--muted);font-weight:600;font-size:12px;white-space:nowrap}
+  tbody tr:hover{background:#141922}
+  td.num{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;
+    font-size:11.5px;font-weight:600;border:1px solid transparent;white-space:nowrap}
+  .pill .d{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .pill.live{color:#fff;background:rgba(251,114,153,.18);border-color:rgba(251,114,153,.5)}
+  .pill.off{color:var(--muted);background:#171c24;border-color:var(--line2)}
+  .pill.round{color:var(--warn);background:rgba(240,180,41,.13);border-color:rgba(240,180,41,.4)}
+  .pill.err{color:var(--err);background:rgba(239,83,80,.12);border-color:rgba(239,83,80,.4)}
+  .msg{padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;display:none;white-space:pre-wrap}
+  .msg.on{display:block}
+  .msg.ok{background:rgba(49,196,141,.12);border:1px solid rgba(49,196,141,.4);color:#8fe3c0}
+  .msg.err{background:rgba(239,83,80,.12);border:1px solid rgba(239,83,80,.4);color:#ffb3b1}
+  .msg.warn{background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.4);color:#f5d489}
+  #logbox{
+    background:#080b10;border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+    height:440px;overflow:auto;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.7;
+  }
+  #logbox div{white-space:pre-wrap;word-break:break-all}
+  #logbox .t{color:#5b6878;margin-right:8px}
+  #logbox .info{color:#c9d4e3}
+  #logbox .warn{color:var(--warn)}
+  #logbox .error{color:var(--err)}
+  #logbox .debug{color:#66738a}
+  .muted{color:var(--muted)}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+  .kv b{font-weight:600;color:var(--muted)}
+  .roomtitle{max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .thumb{width:88px;height:50px;object-fit:cover;border-radius:5px;background:#0d1117;display:block}
+  .empty-tip{color:var(--muted);font-size:13px;padding:14px 0}
+  .inline-add{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+  .inline-add .field{flex:1;min-width:280px}
+  code{background:#0d1117;border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><i></i>直播监控后台</div>
+  <nav>
+    <button data-tab="status" class="on">运行状态</button>
+    <button data-tab="rooms">房间管理</button>
+    <button data-tab="config">参数设置</button>
+    <button data-tab="logs">日志</button>
+  </nav>
+  <div class="spacer"></div>
+  <a class="btn" id="openMonitor" href="/" target="_blank">打开监控画面 ↗</a>
+  <button class="btn" id="btnRefresh">立即刷新一轮</button>
+  <button class="btn primary" id="btnSave">保存配置</button>
+</header>
+
+<div class="wrap">
+  <div id="msg" class="msg"></div>
+
+  <!-- 运行状态 -->
+  <section class="page on" id="page-status">
+    <div class="card">
+      <h2>房间状态</h2>
+      <p class="hint" id="statusHint">状态每 <span id="stInt">–</span> 秒刷新一次，截图每 <span id="capInt">–</span> 秒抓一次（两个线程互相独立）。</p>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr>
+            <th>画面</th><th>房间</th><th>状态</th><th>标题</th><th>人气</th>
+            <th>最后截图</th><th>抓取次数</th><th>备注</th>
+          </tr></thead>
+          <tbody id="statusBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2>服务信息</h2>
+      <div class="kv" id="pathsBox"></div>
+    </div>
+  </section>
+
+  <!-- 房间管理 -->
+  <section class="page" id="page-rooms">
+    <div class="card">
+      <h2>添加房间</h2>
+      <p class="hint">支持粘贴直播间链接、UP 主空间链接或纯数字房间号，会先解析出房间再确认添加。</p>
+      <div class="inline-add">
+        <div class="field">
+          <label>直播间地址 / 房间号 / UID</label>
+          <input type="text" id="addInput" placeholder="https://live.bilibili.com/21452505 或 21452505 或 https://space.bilibili.com/434334701">
+        </div>
+        <button class="btn" id="btnResolve">解析</button>
+        <button class="btn primary" id="btnAdd" disabled>添加到列表</button>
+      </div>
+      <div id="resolveOut" class="muted" style="margin-top:10px;font-size:12.5px"></div>
+    </div>
+
+    <div class="card">
+      <h2>房间列表 <span class="muted" id="roomCount"></span></h2>
+      <p class="hint">顺序就是监控画面上的窗口顺序（从左到右、从上到下）。改完记得点右上角「保存配置」。</p>
+      <div style="overflow:auto">
+        <table>
+          <thead><tr>
+            <th style="width:56px">序号</th><th>显示名称</th><th>房间</th><th>UID</th>
+            <th style="width:80px">启用</th><th style="width:190px">排序 / 删除</th>
+          </tr></thead>
+          <tbody id="roomsBody"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn small" id="btnAutoLayout">按房间数自动排布行列</button>
+        <span class="muted" id="layoutTip"></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 参数设置 -->
+  <section class="page" id="page-config">
+    <div id="configForms"></div>
+    <div class="row" style="margin-bottom:24px">
+      <button class="btn primary" id="btnSave2">保存配置</button>
+      <button class="btn" id="btnReload">放弃改动并重新载入</button>
+      <button class="btn ghost" id="btnDefaults">恢复默认值</button>
+      <button class="btn" id="btnTest">测试接口连通性</button>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="page" id="page-logs">
+    <div class="card">
+      <h2>运行日志</h2>
+      <p class="hint">每 3 秒自动刷新。<span class="muted">debug 级别的“状态刷新完成/截图完成”只是心跳记录。</span></p>
+      <div id="logbox"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var $ = function(id){ return document.getElementById(id); };
+  var state = { config:null, defaults:null, sections:[], rooms:[], pending:null, live:{} };
+
+  // ---------------------------------------------------------------- 提示
+  var msgTimer = null;
+  function say(kind, text){
+    var box = $('msg');
+    box.className = 'msg on ' + kind;
+    box.textContent = text;
+    clearTimeout(msgTimer);
+    if (kind !== 'err') msgTimer = setTimeout(function(){ box.className = 'msg'; }, 5000);
+  }
+
+  function api(path, opts){
+    return fetch(path, Object.assign({ cache:'no-store' }, opts || {}))
+      .then(function(r){ return r.json().then(function(j){ return { ok:r.ok, body:j }; }); })
+      .then(function(res){
+        if (!res.ok || res.body.ok === false) throw new Error(res.body.error || ('HTTP 请求失败'));
+        return res.body;
+      });
+  }
+
+  // ---------------------------------------------------------------- 标签页
+  document.querySelectorAll('nav button').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('nav button').forEach(function(b){ b.classList.remove('on'); });
+      document.querySelectorAll('.page').forEach(function(p){ p.classList.remove('on'); });
+      btn.classList.add('on');
+      $('page-' + btn.dataset.tab).classList.add('on');
+    });
+  });
+
+  // ---------------------------------------------------------------- 配置表单
+  function fieldRow(section, field, value){
+    var wrap = document.createElement('div');
+    wrap.className = 'field';
+    var label = document.createElement('label');
+    label.textContent = field.label;
+    if (field.unit) {
+      var u = document.createElement('span'); u.className = 'unit'; u.textContent = '(' + field.unit + ')';
+      label.appendChild(u);
+    }
+    wrap.appendChild(label);
+
+    var input;
+    var path = section + '.' + field.key;
+    if (field.type === 'bool'){
+      var box = document.createElement('label');
+      box.className = 'check';
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!value;
+      box.appendChild(input);
+      var txt = document.createElement('span'); txt.textContent = value ? '已启用' : '已关闭';
+      input.addEventListener('change', function(){ txt.textContent = input.checked ? '已启用' : '已关闭'; });
+      box.appendChild(txt);
+      wrap.appendChild(box);
+      input.dataset.path = path; input.dataset.kind = 'bool';
+    } else if (field.type === 'select'){
+      input = document.createElement('select');
+      (field.options || []).forEach(function(opt){
+        var o = document.createElement('option');
+        o.value = opt[0]; o.textContent = opt[1];
+        input.appendChild(o);
+      });
+      input.value = value;
+      input.dataset.path = path; input.dataset.kind = 'text';
+      wrap.appendChild(input);
+    } else if (field.type === 'color'){
+      var row = document.createElement('div'); row.className = 'row';
+      input = document.createElement('input'); input.type = 'color'; input.value = value || '#000000';
+      var text = document.createElement('input'); text.type = 'text'; text.value = value || '';
+      input.addEventListener('input', function(){ text.value = input.value; });
+      text.addEventListener('input', function(){ if (/^#[0-9a-fA-F]{6}$/.test(text.value)) input.value = text.value; });
+      row.appendChild(input); row.appendChild(text);
+      wrap.appendChild(row);
+      text.dataset.path = path; text.dataset.kind = 'text';
+      input = text;
+    } else if (field.type === 'textarea'){
+      input = document.createElement('textarea');
+      input.value = value == null ? '' : value;
+      input.dataset.path = path; input.dataset.kind = 'text';
+      wrap.appendChild(input);
+    } else {
+      input = document.createElement('input');
+      input.type = field.type === 'number' ? 'number' : 'text';
+      if (field.type === 'number') input.step = 'any';
+      input.value = value == null ? '' : value;
+      input.dataset.path = path; input.dataset.kind = field.type === 'number' ? 'number' : 'text';
+      wrap.appendChild(input);
+    }
+    if (field.help){
+      var h = document.createElement('div'); h.className = 'help'; h.textContent = field.help;
+      wrap.appendChild(h);
+    }
+    return wrap;
+  }
+
+  function renderConfig(){
+    var host = $('configForms');
+    host.innerHTML = '';
+    state.sections.forEach(function(section){
+      var card = document.createElement('div');
+      card.className = 'card';
+      var h = document.createElement('h2'); h.textContent = section.title; card.appendChild(h);
+      if (section.desc){
+        var p = document.createElement('p'); p.className = 'hint'; p.textContent = section.desc; card.appendChild(p);
+      }
+      var grid = document.createElement('div'); grid.className = 'grid2';
+      var values = state.config[section.key] || {};
+      section.fields.forEach(function(field){
+        grid.appendChild(fieldRow(section.key, field, values[field.key]));
+      });
+      card.appendChild(grid);
+      host.appendChild(card);
+    });
+  }
+
+  function collectConfig(){
+    var cfg = JSON.parse(JSON.stringify(state.config));
+    document.querySelectorAll('#configForms [data-path]').forEach(function(el){
+      var parts = el.dataset.path.split('.');
+      var kind = el.dataset.kind;
+      var value = el.type === 'checkbox' ? el.checked : el.value;
+      if (kind === 'number') value = parseFloat(value);
+      cfg[parts[0]] = cfg[parts[0]] || {};
+      cfg[parts[0]][parts[1]] = value;
+    });
+    return cfg;
+  }
+
+  // ---------------------------------------------------------------- 房间表
+  function renderRooms(){
+    var body = $('roomsBody');
+    body.innerHTML = '';
+    $('roomCount').textContent = '（共 ' + state.rooms.length + ' 个）';
+    if (!state.rooms.length){
+      body.innerHTML = '<tr><td colspan="6" class="empty-tip">还没有房间，用上面的输入框加一个。</td></tr>';
+      updateLayoutTip();
+      return;
+    }
+    state.rooms.forEach(function(room, i){
+      var tr = document.createElement('tr');
+
+      var tdNo = document.createElement('td'); tdNo.className = 'num'; tdNo.textContent = i + 1;
+      tr.appendChild(tdNo);
+
+      var tdName = document.createElement('td');
+      var nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.value = room.name || '';
+      nameInput.placeholder = room.uname || '（留空则用主播名）';
+      nameInput.addEventListener('input', function(){ room.name = nameInput.value; });
+      tdName.appendChild(nameInput);
+      tr.appendChild(tdName);
+
+      var tdRoom = document.createElement('td'); tdRoom.className = 'num';
+      tdRoom.innerHTML = room.room_id
+        ? '<a href="https://live.bilibili.com/' + room.room_id + '" target="_blank">' + room.room_id + ' ↗</a>'
+        : '<span class="muted">–</span>';
+      tr.appendChild(tdRoom);
+
+      var tdUid = document.createElement('td'); tdUid.className = 'num'; tdUid.textContent = room.uid || '–';
+      tr.appendChild(tdUid);
+
+      var tdOn = document.createElement('td');
+      var cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.checked = room.enabled !== false;
+      cb.addEventListener('change', function(){ room.enabled = cb.checked; });
+      tdOn.appendChild(cb);
+      tr.appendChild(tdOn);
+
+      var tdOps = document.createElement('td');
+      var up = document.createElement('button');
+      up.className = 'btn small'; up.textContent = '↑'; up.disabled = i === 0;
+      up.title = '上移';
+      up.addEventListener('click', function(){
+        var tmp = state.rooms[i-1]; state.rooms[i-1] = state.rooms[i]; state.rooms[i] = tmp; renderRooms();
+      });
+      var down = document.createElement('button');
+      down.className = 'btn small'; down.textContent = '↓'; down.disabled = i === state.rooms.length - 1;
+      down.title = '下移';
+      down.style.marginLeft = '4px';
+      down.addEventListener('click', function(){
+        var tmp = state.rooms[i+1]; state.rooms[i+1] = state.rooms[i]; state.rooms[i] = tmp; renderRooms();
+      });
+      var del = document.createElement('button');
+      del.className = 'btn small'; del.textContent = '删除';
+      del.style.marginLeft = '4px';
+      del.addEventListener('click', function(){
+        if (!confirm('删除「' + (room.name || room.uname || room.uid) + '」？')) return;
+        state.rooms.splice(i, 1); renderRooms();
+      });
+      tdOps.appendChild(up); tdOps.appendChild(down); tdOps.appendChild(del);
+      tr.appendChild(tdOps);
+
+      body.appendChild(tr);
+    });
+    updateLayoutTip();
+  }
+
+  function updateLayoutTip(){
+    var grid = state.config ? state.config.grid : { cols:3, rows:3 };
+    var slots = grid.cols * grid.rows;
+    var n = state.rooms.length;
+    var tip = grid.cols + ' × ' + grid.rows + ' = ' + slots + ' 个窗口';
+    if (n > slots) tip += '，当前 ' + n + ' 个房间放不下，多出来的不会显示';
+    else if (n < slots) tip += '，当前 ' + n + ' 个房间，还有 ' + (slots - n) + ' 个空窗口';
+    $('layoutTip').textContent = tip;
+  }
+
+  // ---------------------------------------------------------------- 状态表
+  function fmtAgo(sec){
+    if (sec == null) return '–';
+    sec = Math.round(sec);
+    if (sec < 60) return sec + ' 秒前';
+    if (sec < 3600) return Math.round(sec / 60) + ' 分钟前';
+    return Math.round(sec / 3600) + ' 小时前';
+  }
+  function fmtBytes(n){
+    n = n || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024*1024) return (n/1024).toFixed(0) + ' KB';
+    return (n/1024/1024).toFixed(1) + ' MB';
+  }
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+
+  function renderStatus(data){
+    state.live = {};
+    (data.rooms || []).forEach(function(r){ state.live[r.uid] = r; });
+    $('stInt').textContent = data.status_interval;
+    $('capInt').textContent = data.capture_interval;
+
+    var body = $('statusBody');
+    var rooms = data.rooms || [];
+    if (!rooms.length){
+      body.innerHTML = '<tr><td colspan="8" class="empty-tip">还没有配置任何房间。到「房间管理」标签页添加。</td></tr>';
+    } else {
+      var html = '';
+      rooms.forEach(function(r){
+        var pill = r.live ? 'live' : (r.live_status === 2 ? 'round' : 'off');
+        if (!r.enabled) pill = 'off';
+        var statusText = r.enabled ? r.live_text : '已停用';
+        if (r.stale) statusText += ' · 数据陈旧';
+        var note = [];
+        if (r.status_error) note.push('<span style="color:var(--err)">状态：' + esc(r.status_error) + '</span>');
+        if (r.shot_error) note.push('<span style="color:var(--warn)">截图：' + esc(r.shot_error) + '</span>');
+        if (!note.length && r.status_age != null) note.push('<span class="muted">' + fmtAgo(r.status_age) + '刷新</span>');
+        var shotCell = r.display === 'shot'
+          ? fmtAgo(data.server_time - r.image_ts) + ' <span class="muted">/ ' + fmtBytes(r.shot_size) + '</span>'
+          : '<span class="muted">用底图</span>';
+        html += '<tr>' +
+          '<td><img class="thumb" src="' + esc(r.image) + '" alt=""></td>' +
+          '<td><div style="font-weight:600">' + esc(r.name) + '</div>' +
+            '<div class="muted mono">uid ' + r.uid + (r.room_id ? ' / 房间 ' + r.room_id : '') + '</div></td>' +
+          '<td><span class="pill ' + pill + '"><i class="d"></i>' + esc(statusText) + '</span></td>' +
+          '<td><div class="roomtitle" title="' + esc(r.title) + '">' + (esc(r.title) || '<span class="muted">–</span>') + '</div>' +
+            '<div class="muted" style="font-size:12px">' + esc(r.area || '') + '</div></td>' +
+          '<td class="num">' + (r.live ? Number(r.online).toLocaleString() : '–') + '</td>' +
+          '<td class="num">' + shotCell + '</td>' +
+          '<td class="num">' + r.captures + (r.failures ? ' <span style="color:var(--warn)">/' + r.failures + ' 失败</span>' : '') + '</td>' +
+          '<td style="font-size:12px">' + (note.join('<br>') || '') + '</td>' +
+        '</tr>';
+      });
+      body.innerHTML = html;
+    }
+
+    var paths = data.paths || state.paths || {};
+    if (data.paths) state.paths = data.paths;
+    var box = $('pathsBox');
+    if (state.paths){
+      var p = state.paths;
+      box.innerHTML =
+        '<b>项目目录</b><span class="mono">' + esc(p.root) + '</span>' +
+        '<b>配置文件</b><span class="mono">' + esc(p.config_file) + '</span>' +
+        '<b>截图目录</b><span class="mono">' + esc(p.shot_dir) + '</span>' +
+        '<b>状态缓存</b><span class="mono">' + esc(p.state_file) + '</span>' +
+        '<b>未开播底图</b><span class="mono">' + esc(p.fallback_image) + (p.fallback_exists ? '' : ' <span style="color:var(--err)">（找不到文件！）</span>') + '</span>' +
+        '<b>数字素材</b><span class="mono">' + (p.digits && p.digits.length === 10 ? '0-9 齐全' : '缺少 ' + (10 - ((p.digits || []).length)) + ' 个') + '</span>' +
+        '<b>已有截图</b><span class="mono">' + p.shot_count + ' 个文件</span>';
+    }
+  }
+
+  // ---------------------------------------------------------------- 轮询
+  function pollStatus(){
+    api('/api/state').then(function(data){
+      renderStatus(data);
+    }).catch(function(err){
+      $('statusBody').innerHTML = '<tr><td colspan="8" style="color:var(--err)">读取状态失败：' + esc(err.message) + '</td></tr>';
+    });
+  }
+
+  function pollLogs(){
+    api('/api/log?limit=' + (state.config ? state.config.storage.log_lines : 400)).then(function(data){
+      var box = $('logbox');
+      var html = (data.lines || []).map(function(line){
+        var t = new Date(line.ts * 1000).toLocaleTimeString('zh-CN', { hour12:false });
+        return '<div class="' + line.level + '"><span class="t">' + t + '</span>' + esc(line.text) + '</div>';
+      }).join('');
+      var atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+      box.innerHTML = html;
+      if (atBottom) box.scrollTop = box.scrollHeight;
+    }).catch(function(){ /* 日志读不到就先不管 */ });
+  }
+
+  // ---------------------------------------------------------------- 载入 / 保存
+  function loadConfig(){
+    return api('/api/config').then(function(data){
+      state.config = data.config;
+      state.defaults = data.defaults;
+      state.sections = data.sections;
+      state.paths = data.paths;
+      state.rooms = (data.config.rooms || []).map(function(r){ return Object.assign({}, r); });
+      renderConfig();
+      renderRooms();
+      if (data.problems && data.problems.length){
+        say('err', '后台配置项自检失败：\n' + data.problems.join('\n'));
+      }
+      return data;
+    });
+  }
+
+  function save(){
+    var cfg = collectConfig();
+    cfg.rooms = state.rooms;
+    var btn = $('btnSave'); btn.disabled = true;
+    api('/api/config', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ config: cfg })
+    }).then(function(data){
+      state.config = data.config;
+      state.rooms = (data.config.rooms || []).map(function(r){ return Object.assign({}, r); });
+      renderConfig(); renderRooms();
+      var warns = data.warnings || [];
+      say(warns.length ? 'warn' : 'ok',
+          '配置已保存' + (warns.length ? '，有 ' + warns.length + ' 条提示：\n' + warns.join('\n') : ''));
+    }).catch(function(err){
+      say('err', '保存失败：' + err.message);
+    }).finally(function(){ btn.disabled = false; });
+  }
+
+  // ---------------------------------------------------------------- 事件
+  $('btnSave').addEventListener('click', save);
+  $('btnSave2').addEventListener('click', save);
+  $('btnReload').addEventListener('click', function(){ loadConfig().then(function(){ say('ok', '已重新载入'); }); });
+  $('btnDefaults').addEventListener('click', function(){
+    if (!confirm('把所有参数恢复成默认值？房间列表会保持不变。')) return;
+    var keep = state.rooms;
+    state.config = JSON.parse(JSON.stringify(state.defaults));
+    state.config.rooms = keep;
+    renderConfig();
+    say('warn', '已填入默认值，还需要点「保存配置」才会生效。');
+  });
+  $('btnTest').addEventListener('click', function(){
+    api('/api/test', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+      .then(function(d){
+        say(d.errors && d.errors.length ? 'warn' : 'ok',
+          '接口连通性：请求 ' + d.requested + ' 个，返回 ' + d.returned + ' 个，用时 ' + d.elapsed + ' 秒' +
+          (d.errors && d.errors.length ? '\n' + d.errors.join('\n') : ''));
+      })
+      .catch(function(err){ say('err', '连通性测试失败：' + err.message); });
+  });
+  $('btnRefresh').addEventListener('click', function(){
+    api('/api/refresh', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' })
+      .then(function(){ say('ok', '已通知后台立刻跑一轮状态刷新和截图'); pollStatus(); })
+      .catch(function(err){ say('err', err.message); });
+  });
+
+  $('btnResolve').addEventListener('click', function(){
+    var input = $('addInput').value.trim();
+    if (!input){ say('warn', '先填点内容'); return; }
+    $('resolveOut').textContent = '解析中…';
+    api('/api/rooms/resolve', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ input: input })
+    }).then(function(data){
+      state.pending = data.room;
+      $('btnAdd').disabled = false;
+      $('resolveOut').innerHTML =
+        '解析结果：<b>' + esc(data.room.uname || data.room.name || '未知主播') + '</b>' +
+        ' · uid <span class="mono">' + data.room.uid + '</span>' +
+        ' · 房间 <span class="mono">' + (data.room.room_id || '–') + '</span>' +
+        ' · 当前 <b>' + (data.room.live_status === 1 ? '直播中' : (data.room.live_status === 2 ? '轮播' : '未开播')) + '</b>' +
+        (data.room.title ? '<br>标题：' + esc(data.room.title) : '');
+    }).catch(function(err){
+      state.pending = null;
+      $('btnAdd').disabled = true;
+      $('resolveOut').innerHTML = '<span style="color:var(--err)">解析失败：' + esc(err.message) + '</span>';
+    });
+  });
+
+  $('btnAdd').addEventListener('click', function(){
+    var room = state.pending;
+    if (!room) return;
+    if (state.rooms.some(function(r){ return r.uid === room.uid; })){
+      say('warn', '这个房间已经在列表里了');
+      return;
+    }
+    state.rooms.push({ uid: room.uid, room_id: room.room_id, name: room.uname || room.name || '', enabled: true });
+    state.pending = null;
+    $('btnAdd').disabled = true;
+    $('addInput').value = '';
+    $('resolveOut').textContent = '';
+    renderRooms();
+    say('ok', '已加入列表，记得点「保存配置」');
+  });
+
+  $('btnAutoLayout').addEventListener('click', function(){
+    var n = Math.max(1, state.rooms.length);
+    var cols = Math.ceil(Math.sqrt(n));
+    var rows = Math.ceil(n / cols);
+    state.config.grid.cols = cols;
+    state.config.grid.rows = rows;
+    renderConfig();
+    updateLayoutTip();
+    say('ok', '已按 ' + n + ' 个房间排成 ' + cols + ' × ' + rows + '（点保存生效）');
+  });
+
+  // ---------------------------------------------------------------- 启动
+  loadConfig().then(function(){
+    pollStatus();
+    pollLogs();
+    setInterval(pollStatus, 3000);
+    setInterval(pollLogs, 3000);
+  }).catch(function(err){
+    say('err', '载入配置失败：' + err.message);
+  });
+})();
+</script>
+</body>
+</html>

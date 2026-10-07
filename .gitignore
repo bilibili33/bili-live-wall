@@ -1,0 +1,26 @@
+# ── 本地配置与运行期数据（首次运行会自动生成）──────────────
+config.json
+data/
+*.log
+
+# ── Python ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# ── 工具类大文件，别提交 ─────────────────────────────
+# chrome-headless-shell 解包后 200MB+；要用请自行下载
+chrome-headless-shell-win64/
+chromedriver-win64/
+wget-1.11.4-1-bin/
+*.zip
+*.7z
+
+# ── 编辑器 / 系统 ────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
