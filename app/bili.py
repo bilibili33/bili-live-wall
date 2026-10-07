@@ -199,7 +199,8 @@ def parse_room_input(text: str) -> dict:
     if m:
         return {"kind": "uid", "value": m.group(1)}
 
-    m = re.fullmatch(r"\s*(\d{1,12})\s*", text)
+    # 纯数字：房间号或 uid，B 站 uid 最长能到 16 位以上，别卡太死
+    m = re.fullmatch(r"\s*(\d{1,19})\s*", text)
     if m:
         return {"kind": "number", "value": m.group(1)}
 

@@ -18,6 +18,16 @@ class _Worker(threading.Thread):
         self.rt = runtime
         self._stop = threading.Event()
         self._wake = threading.Event()
+        self._last_problems: tuple = ()
+
+    def _log_problems(self, problems: list[str]) -> None:
+        """同一批错误只记一次，不然一个坏房间会每轮刷屏。"""
+        key = tuple(sorted(set(problems)))
+        if key == self._last_problems:
+            return
+        self._last_problems = key
+        for message in key:
+            self.rt.state.log("warn", message)
 
     def wake(self) -> None:
         self._wake.set()
@@ -109,9 +119,7 @@ class StatusWorker(_Worker):
             elif was_live and not room.is_live():
                 self.rt.state.log("info", f"「{room.display_name}」已下播")
 
-        for message in dict.fromkeys(errors):
-            self.rt.state.log("warn", message)
-
+        self._log_problems(errors)
         self.rt.state.log(
             "debug",
             f"状态刷新完成：{len(rooms)} 个房间，{live_count} 个在播，用时 {time.time() - started:.2f}s",
@@ -145,8 +153,7 @@ class CaptureWorker(_Worker):
 
         # 截图线程自己去取一次关键帧地址，不依赖状态线程的结果
         infos, errors = self.rt.bili.fetch_statuses([r.uid for r in candidates])
-        for message in dict.fromkeys(errors):
-            self.rt.state.log("warn", f"截图：{message}")
+        self._log_problems([f"截图：{m}" for m in errors])
 
         shot_dir = self.rt.config.shot_dir
         os.makedirs(shot_dir, exist_ok=True)

@@ -9,6 +9,8 @@ import json
 import os
 import threading
 
+from .paths import find_asset
+
 CONFIG_FILE = "config.json"
 
 DEFAULT_UA = (
@@ -186,8 +188,10 @@ def _coerce(value, typ, lo, hi):
 def normalize_room(raw) -> dict | None:
     if not isinstance(raw, dict):
         return None
-    uid = _coerce(raw.get("uid"), int, 1, 10**12)
-    room_id = _coerce(raw.get("room_id"), int, 0, 10**12)
+    # B 站 uid 有超过 10^12 的（虚拟主播那批新号能到 3.5e15），范围要给够，
+    # 否则超大 uid 会被夹到同一个上限、彼此判成重复房间然后被丢掉。
+    uid = _coerce(raw.get("uid"), int, 1, 10**18)
+    room_id = _coerce(raw.get("room_id"), int, 0, 10**18)
     if uid is None and room_id is None:
         return None
     name = str(raw.get("name") or "").strip()
@@ -288,12 +292,12 @@ class ConfigStore:
     @property
     def fallback_image(self) -> str:
         with self._lock:
-            return self.resolve(self._config["assets"]["fallback_image"])
+            return find_asset(self._config["assets"]["fallback_image"], self.root)
 
     @property
     def digit_dir(self) -> str:
         with self._lock:
-            return self.resolve(self._config["assets"]["digit_dir"])
+            return find_asset(self._config["assets"]["digit_dir"], self.root)
 
     # -- 读写 ---------------------------------------------------------
     def snapshot(self) -> dict:

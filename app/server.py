@@ -16,9 +16,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import meta
 from .bili import BiliError, resolve_room, sniff_mime
 from .config import DEFAULTS
+from .paths import bundle_dir
 from .runtime import Runtime
 
-WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+WEB_DIR = os.path.join(bundle_dir(), "app", "web")
 MAX_BODY = 1024 * 1024
 
 

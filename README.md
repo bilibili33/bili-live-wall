@@ -15,6 +15,15 @@
 
 ## 快速开始
 
+### 方式一：免安装版（不需要装 Python）
+
+到 [Releases](https://github.com/bilibili33/bili-live-wall/releases) 下载 `bili-live-wall-v1.0.0-win64.zip`，解压，双击里面的 `bili-live-wall.exe` 就行。
+
+> 整个文件夹一起解压，**别只把 exe 拖出来**，`_internal` 是它的运行库。
+> 首次运行 Windows 可能弹「已保护你的电脑」（因为没买代码签名），点「更多信息」→「仍要运行」。
+
+### 方式二：源码运行
+
 **不需要 `pip install` 任何东西**，只用 Python 标准库（开发环境 3.14，3.9 以上应该都能跑）。
 
 ```
@@ -29,9 +38,12 @@ python main.py
 python main.py --port 9000 --no-browser     # 换端口 / 不自动开浏览器
 ```
 
-首次运行会自动生成 `config.json`，里面已经预置了 4 个直播间，直接就能看。
+### 都一样的部分
 
-所有东西都写在项目目录里（`config.json`、`data/`），不碰注册表也不写 `%APPDATA%`——**不想要了整个文件夹删掉就干净了**。
+- 首次运行会自动生成 `config.json`，里面已经预置了 4 个直播间，直接就能看。
+- 免安装版的 `config.json` 和 `data\` 生成在 **exe 旁边**；源码版生成在**项目目录**里。
+- 不碰注册表也不写 `%APPDATA%`——**不想要了整个文件夹删掉就干净了**。
+- 两种方式用的是同一份代码，行为完全一致。
 
 ---
 
@@ -103,11 +115,24 @@ CaptureWorker ──每 30 秒──▶  自己再取一次关键帧地址（不
 
 ---
 
+## 自己打包免安装版
+
+```
+python -m pip install pyinstaller
+build.bat
+```
+
+产物在 `dist\bili-live-wall\`（**onedir**，不是单文件：单文件每次启动都要把 20MB 解压到临时目录，慢且更容易被杀软盯上）。打包配置在 `bili-live-wall.spec`，里面把网页和素材打进 `_internal`，而 `config.json` 和 `data\` 仍然落在 exe 旁边——所以打包版和源码版行为一致。
+
+---
+
 ## 目录结构
 
 ```
 main.py                  启动入口
-start.bat                双击启动
+start.bat                双击启动（源码方式）
+build.bat                双击打包 exe
+bili-live-wall.spec      PyInstaller 打包配置
 config.json              所有配置（首次运行自动生成，已被 .gitignore 忽略）
 app/
   config.py              默认值、类型与范围校验、读写
@@ -116,6 +141,7 @@ app/
   workers.py             状态线程 + 截图线程
   runtime.py             把上面这些串起来
   server.py              HTTP 路由
+  paths.py               区分"只读资源"和"用户数据"（打包后靠它）
   meta.py                后台表单元数据（与 config.SCHEMA 自检对齐）
   web/monitor.html       监控画面
   web/admin.html         配置后台
