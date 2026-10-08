@@ -16,6 +16,11 @@ SECTIONS: list[dict] = [
             {"key": "host", "label": "监听地址", "type": "text", "help": "默认 127.0.0.1 只允许本机访问；改成 0.0.0.0 可供局域网其它设备访问。"},
             {"key": "port", "label": "端口", "type": "number", "unit": "", "help": "监控页 http://127.0.0.1:<端口>/ ，配置页 /admin 。"},
             {"key": "open_browser", "label": "启动时自动打开浏览器", "type": "bool"},
+            {"key": "log_level", "label": "控制台日志级别", "type": "select",
+             "options": [["debug", "debug（最啰嗦，全部打印）"], ["info", "info"], ["warn", "warn"], ["error", "error"]],
+             "help": "排查问题时用 debug，能看见每一次 HTTP 请求和每个房间的截图结果。"},
+            {"key": "log_to_file", "label": "同时写日志文件", "type": "bool",
+             "help": "写到 data\\bili-live-wall.log（超过 5MB 自动轮转一次），出问题把文件发出来最快。"},
         ],
     },
     {

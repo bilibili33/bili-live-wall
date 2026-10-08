@@ -65,15 +65,19 @@ class RoomState:
     def is_live(self) -> bool:
         return self.live_status == 1
 
+    def status_text(self) -> str:
+        return STATUS_TEXT.get(self.live_status, f"未知({self.live_status})")
+
 
 class StateStore:
-    def __init__(self, config_store, boot_id: str = ""):
+    def __init__(self, config_store, boot_id: str = "", sink=None):
         self._cfg = config_store
         self.boot_id = boot_id      # 每次启动都不同，用来让浏览器丢弃上次进程留下的图片缓存
+        self.sink = sink            # app.logging_.LogSink，负责控制台/文件/内存三处写
         self._lock = threading.RLock()
         self._rooms: dict[int, RoomState] = {}
         self._order: list[int] = []
-        self._log: deque[tuple[float, str, str]] = deque(maxlen=1000)
+        self._log: deque[tuple[float, str, str]] = deque(maxlen=3000)
         self._fallback_rev = 0
         self._fallback_mime = "image/png"
         self._dirty = False
@@ -81,12 +85,27 @@ class StateStore:
 
     # -- 日志 ---------------------------------------------------------
     def log(self, level: str, message: str) -> None:
+        if self.sink is not None:
+            self.sink.write(level, message)
+            return
         with self._lock:
             self._log.append((_now(), level, message))
-        if level in ("error", "warn"):
-            print(f"[{level}] {message}", flush=True)
+
+    def debug(self, message: str) -> None:
+        self.log("debug", message)
+
+    def info(self, message: str) -> None:
+        self.log("info", message)
+
+    def warn(self, message: str) -> None:
+        self.log("warn", message)
+
+    def error(self, message: str) -> None:
+        self.log("error", message)
 
     def logs(self, limit: int = 200) -> list[dict]:
+        if self.sink is not None:
+            return self.sink.lines(limit)
         with self._lock:
             items = list(self._log)[-limit:]
         return [{"ts": ts, "level": lv, "text": tx} for ts, lv, tx in items]

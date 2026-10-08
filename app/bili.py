@@ -1,25 +1,34 @@
 """B 站直播间 API 客户端（只依赖标准库）。
 
-用到的两个接口：
+接口：
   * get_status_info_by_uids —— 一次请求拿回所有房间的 直播状态/标题/人气/主播名/封面/keyframe
   * room_init              —— 把「房间号 / 短号 / 直播间链接」解析成 room_id + uid
+
+关键帧图挂在 i0.hdslb.com 这类 CDN 上。不同网络环境下个别 CDN 域名可能拉不通，
+所以下载失败会自动换 i1/i2 再试，并且每一次尝试都会写日志。
 """
 from __future__ import annotations
 
 import gzip
-import io
 import json
 import re
+import socket
+import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from .logging_ import describe_exception
 
 LIVE_STATUS = {
     0: "offline",   # 未开播
     1: "live",      # 直播中
     2: "round",     # 轮播（放录像）
 }
+
+IMAGE_HOST_RE = re.compile(r"^i(\d)\.hdslb\.com$", re.I)
+IMAGE_HOSTS = ("i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com")
 
 
 class BiliError(RuntimeError):
@@ -35,12 +44,40 @@ def _decompress(raw: bytes, encoding: str) -> bytes:
     return raw
 
 
+def host_variants(url: str) -> list[str]:
+    """把 i0.hdslb.com 换成 i1/i2，用来在某个 CDN 域名不通时兜底。"""
+    parts = urllib.parse.urlsplit(url)
+    match = IMAGE_HOST_RE.match(parts.netloc)
+    if not match:
+        return [url]
+    out = [url]
+    for host in IMAGE_HOSTS:
+        if host.lower() != parts.netloc.lower():
+            out.append(urllib.parse.urlunsplit(
+                (parts.scheme or "https", host, parts.path, parts.query, parts.fragment)))
+    return out
+
+
+def _short_url(url: str, limit: int = 110) -> str:
+    if len(url) <= limit:
+        return url
+    return url[: limit - 3] + "..."
+
+
 class BiliClient:
-    def __init__(self, config_provider):
+    def __init__(self, config_provider, state=None, root: str | None = None):
         # config_provider 返回一份配置快照（dict）
         self._cfg = config_provider
+        self.state = state          # 可选：用来写日志
+        self.root = root            # 可选：用来定位内置 CA 包
+        self.requests = 0
+        self.request_failures = 0
 
     # ------------------------------------------------------------------
+    def log(self, level: str, message: str) -> None:
+        if self.state is not None:
+            self.state.log(level, message)
+
     def _opts(self):
         cfg = self._cfg()
         st = cfg.get("status", {})
@@ -52,7 +89,7 @@ class BiliClient:
             "cookie": (st.get("cookie") or "").strip(),
         }
 
-    def _headers(self) -> dict:
+    def _json_headers(self) -> dict:
         o = self._opts()
         headers = {
             "User-Agent": o["ua"],
@@ -66,34 +103,101 @@ class BiliClient:
             headers["Cookie"] = o["cookie"]
         return headers
 
-    def _request(self, url: str, timeout: float | None = None) -> bytes:
+    def _image_headers(self, with_referer: bool = True) -> dict:
+        """图片请求单独一套头：不带 Origin，Accept 也要像浏览器。"""
         o = self._opts()
-        req = urllib.request.Request(url, headers=self._headers())
+        headers = {
+            "User-Agent": o["ua"],
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept-Encoding": "gzip",
+        }
+        if with_referer:
+            headers["Referer"] = o["referer"]
+        if o["cookie"]:
+            headers["Cookie"] = o["cookie"]
+        return headers
+
+    # ------------------------------------------------------------------
+    def _open(self, url: str, timeout: float, headers: dict, what: str):
+        """发一个请求，把结果和耗时都记下来。返回 (bytes, 信息字典)。"""
+        o = self._opts()
+        req = urllib.request.Request(url, headers=headers)
+        started = time.time()
+        self.requests += 1
         try:
-            with urllib.request.urlopen(req, timeout=timeout or o["timeout"]) as resp:
-                return _decompress(resp.read(), (resp.headers.get("Content-Encoding") or "").lower())
+            if self.root:
+                from . import tls
+                response = tls.opener(self.root).open(req, timeout=timeout or o["timeout"])
+            else:
+                response = urllib.request.urlopen(req, timeout=timeout or o["timeout"])
+            with response as resp:
+                raw = resp.read()
+                elapsed = time.time() - started
+                encoding = (resp.headers.get("Content-Encoding") or "").lower()
+                blob = _decompress(raw, encoding)
+                info = {
+                    "status": resp.status,
+                    "content_type": resp.headers.get("Content-Type") or "",
+                    "encoding": encoding,
+                    "bytes": len(blob),
+                    "elapsed": elapsed,
+                    "final_url": resp.geturl(),
+                }
+                self.log("debug", f"[{what}] GET {_short_url(url)} → {resp.status} "
+                                  f"{len(blob)}B {info['content_type'] or '?'} {elapsed:.2f}s")
+                return blob, info
         except urllib.error.HTTPError as exc:
+            elapsed = time.time() - started
+            self.request_failures += 1
+            body = b""
+            try:
+                body = exc.read()[:400]
+            except Exception:  # noqa: BLE001
+                pass
+            detail = body.decode("utf-8", "replace").strip().replace("\n", " ")[:200]
+            self.log("error", f"[{what}] GET {_short_url(url)} 失败：HTTP {exc.code} {exc.reason}"
+                              f"（{elapsed:.2f}s）")
+            if detail:
+                self.log("error", f"[{what}]   响应内容：{detail}")
+            if exc.code in (403, 401):
+                self.log("error", f"[{what}]   403/401 一般是防盗链或风控，"
+                                  f"Referer={headers.get('Referer')!r} 可能不被这个 CDN 接受")
             raise BiliError(f"HTTP {exc.code} {exc.reason}") from exc
         except urllib.error.URLError as exc:
-            raise BiliError(f"网络错误：{exc.reason}") from exc
-        except TimeoutError as exc:
+            self.request_failures += 1
+            reason = getattr(exc, "reason", exc)
+            self.log("error", f"[{what}] GET {_short_url(url)} 失败：{describe_exception(reason)}"
+                              f"（{time.time() - started:.2f}s）")
+            self.log("error", f"[{what}]   底层错误：{type(reason).__name__}: {reason}")
+            raise BiliError(f"{describe_exception(reason)}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            self.request_failures += 1
+            self.log("error", f"[{what}] GET {_short_url(url)} 超时（{time.time() - started:.2f}s）")
             raise BiliError("请求超时") from exc
-        except OSError as exc:
-            raise BiliError(f"连接失败：{exc}") from exc
+        except (ssl.SSLError, OSError) as exc:
+            self.request_failures += 1
+            self.log("error", f"[{what}] GET {_short_url(url)} 失败：{describe_exception(exc)}")
+            self.log("error", f"[{what}]   底层错误：{type(exc).__name__}: {exc}")
+            raise BiliError(describe_exception(exc)) from exc
 
-    def _get_json(self, path: str, params: list[tuple[str, str]] | None = None, timeout: float | None = None) -> dict:
+    def _get_json(self, path: str, params: list[tuple[str, str]] | None = None,
+                  timeout: float | None = None) -> dict:
         o = self._opts()
         url = o["base"] + path
         if params:
             # 手工拼接，保留 uids[0] 里的方括号
             query = "&".join(
-                f"{urllib.parse.quote(str(k), safe='[]')}={urllib.parse.quote(str(v))}" for k, v in params
+                f"{urllib.parse.quote(str(k), safe='[]')}={urllib.parse.quote(str(v))}"
+                for k, v in params
             )
             url = f"{url}?{query}"
-        raw = self._request(url, timeout=timeout)
+        blob, _info = self._open(url, timeout or o["timeout"], self._json_headers(), "api")
         try:
-            data = json.loads(raw.decode("utf-8", "replace"))
+            data = json.loads(blob.decode("utf-8", "replace"))
         except ValueError as exc:
+            self.log("error", f"[api] {_short_url(url)} 返回的不是 JSON（{exc}）"
+                              f"，前 200 字节：{blob[:200]!r}")
             raise BiliError(f"接口返回的不是 JSON（{exc}）") from exc
         if not isinstance(data, dict):
             raise BiliError("接口返回格式异常")
@@ -142,7 +246,8 @@ class BiliClient:
     def room_init(self, ident: str) -> dict:
         payload = self._get_json("/room/v1/Room/room_init", [("id", str(ident))])
         if payload.get("code") != 0:
-            raise BiliError(f"room_init 失败：code={payload.get('code')} {payload.get('message') or ''}".strip())
+            raise BiliError(f"room_init 失败：code={payload.get('code')} "
+                            f"{payload.get('message') or ''}".strip())
         data = payload.get("data") or {}
         if not data.get("room_id"):
             raise BiliError("room_init 未返回 room_id")
@@ -151,14 +256,50 @@ class BiliClient:
     def get_info(self, room_id: int) -> dict:
         payload = self._get_json("/room/v1/Room/get_info", [("room_id", str(room_id))])
         if payload.get("code") != 0:
-            raise BiliError(f"get_info 失败：code={payload.get('code')} {payload.get('message') or ''}".strip())
+            raise BiliError(f"get_info 失败：code={payload.get('code')} "
+                            f"{payload.get('message') or ''}".strip())
         return payload.get("data") or {}
 
     # ------------------------------------------------------------------
+    def probe(self, url: str, timeout: float = 15, with_referer: bool = True,
+              what: str = "探测"):
+        """给自检用的裸请求：返回 (字节, 信息)，失败直接抛异常。"""
+        return self._open(url, timeout, self._image_headers(with_referer), what)
+
     def download(self, url: str, timeout: float | None = None) -> tuple[bytes, str]:
-        """下载图片。返回 (字节, 实际内容类型)。"""
-        raw = self._request(url, timeout=timeout)
-        return raw, sniff_mime(raw)
+        """下载图片。返回 (字节, 实际内容类型)。
+
+        会依次尝试 i0/i1/i2 三个 CDN 域名；遇到 403 还会去掉 Referer 再试一次
+        （有些 CDN 边缘节点对防盗链的判断不一致）。
+        """
+        o = self._opts()
+        timeout = timeout or o["timeout"]
+        attempts: list[tuple[str, bool]] = []
+        for host_url in host_variants(url):
+            attempts.append((host_url, True))
+            attempts.append((host_url, False))   # 不带 Referer 再来一次
+
+        problems: list[str] = []
+        tried: set[tuple[str, bool]] = set()
+        for target, with_referer in attempts:
+            if (target, with_referer) in tried:
+                continue
+            tried.add((target, with_referer))
+            tag = "图片" if with_referer else "图片(无Referer)"
+            try:
+                blob, info = self._open(target, timeout, self._image_headers(with_referer), tag)
+            except BiliError as exc:
+                problems.append(f"{urllib.parse.urlsplit(target).netloc}"
+                                f"{'' if with_referer else '(无Referer)'}: {exc}")
+                continue
+            if not blob:
+                problems.append(f"{urllib.parse.urlsplit(target).netloc}: 内容为空")
+                continue
+            return blob, sniff_mime(blob)
+
+        summary = "；".join(dict.fromkeys(problems)) or "所有 CDN 都没取到内容"
+        self.log("error", f"[图片] 全部尝试失败：{summary}")
+        raise BiliError(summary)
 
 
 # ----------------------------------------------------------------------

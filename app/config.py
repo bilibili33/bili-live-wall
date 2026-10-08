@@ -24,6 +24,8 @@ DEFAULTS: dict = {
         "host": "127.0.0.1",
         "port": 8848,
         "open_browser": True,
+        "log_level": "debug",
+        "log_to_file": True,
     },
     "grid": {
         "cols": 2,
@@ -92,6 +94,8 @@ SCHEMA: dict[str, dict[str, tuple]] = {
         "host": (str, None, None),
         "port": (int, 1, 65535),
         "open_browser": (bool, None, None),
+        "log_level": (str, None, ("debug", "info", "warn", "error")),
+        "log_to_file": (bool, None, None),
     },
     "grid": {
         "cols": (int, 1, 12),
@@ -288,6 +292,11 @@ class ConfigStore:
     def state_file(self) -> str:
         with self._lock:
             return self.resolve(self._config["storage"]["state_file"])
+
+    @property
+    def log_file(self) -> str:
+        """日志跟着状态缓存放同一个目录，打包版就落在 exe 旁边的 data\\ 里。"""
+        return os.path.join(os.path.dirname(self.state_file), "bili-live-wall.log")
 
     @property
     def fallback_image(self) -> str:

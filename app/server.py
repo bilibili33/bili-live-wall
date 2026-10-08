@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from . import meta
 from .bili import BiliError, resolve_room, sniff_mime
-from .config import DEFAULTS
+from .config import ConfigStore, DEFAULTS
 from .paths import bundle_dir
 from .runtime import Runtime
 
@@ -219,11 +219,14 @@ class Handler(BaseHTTPRequestHandler):
             "config_file": self.rt.config.path,
             "shot_dir": shot_dir,
             "state_file": self.rt.config.state_file,
+            "log_file": self.rt.sink.path or "",
             "fallback_image": self.rt.config.fallback_image,
             "fallback_exists": os.path.isfile(self.rt.config.fallback_image),
             "digit_dir": self.rt.config.digit_dir,
             "digits": sorted(self.rt.digits().keys()),
             "shot_count": shots,
+            "requests": self.rt.bili.requests,
+            "request_failures": self.rt.bili.request_failures,
         }
 
     def _config_payload(self) -> dict:
@@ -277,7 +280,11 @@ class Handler(BaseHTTPRequestHandler):
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
-    allow_reuse_address = True
+    # 注意：http.server.HTTPServer 默认 allow_reuse_address = 1。
+    # 在 Windows 上 SO_REUSEADDR 的语义是"允许别的进程绑同一个端口"，
+    # 于是双击两次 exe 会两个实例都"启动成功"，请求被随机分给其中一边，
+    # 表现出来就是画面时有时无、配置改了没反应。这里关掉，让它老老实实报端口占用。
+    allow_reuse_address = False
 
     def __init__(self, address, runtime: Runtime, verbose: bool = False):
         self.runtime = runtime
@@ -285,8 +292,9 @@ class Server(ThreadingHTTPServer):
         super().__init__(address, Handler)
 
 
-def build(root: str, host: str | None = None, port: int | None = None, verbose: bool = False) -> tuple[Server, Runtime]:
-    runtime = Runtime(root)
+def build(root: str, host: str | None = None, port: int | None = None,
+          verbose: bool = False, console_level: str | None = None) -> tuple[Server, Runtime]:
+    runtime = Runtime(root, console_level=console_level)
     cfg = runtime.config.snapshot()
     addr = (host or cfg["server"]["host"], int(port or cfg["server"]["port"]))
     server = Server(addr, runtime, verbose=verbose)
@@ -294,13 +302,24 @@ def build(root: str, host: str | None = None, port: int | None = None, verbose: 
 
 
 def serve(root: str, host: str | None = None, port: int | None = None,
-          verbose: bool = False, open_browser: bool | None = None) -> int:
+          verbose: bool = False, open_browser: bool | None = None,
+          console_level: str | None = None) -> int:
     try:
-        server, runtime = build(root, host, port, verbose)
+        server, runtime = build(root, host, port, verbose, console_level)
     except OSError as exc:
+        busy = getattr(exc, "errno", None) in (48, 98, 10013, 10048, 10049)
         print(f"启动失败：{exc}")
-        if getattr(exc, "errno", None) in (48, 98, 10048):
-            print("端口被占用了，改一下 config.json 里的 server.port，或加 --port 参数。")
+        if busy:
+            cfg = None
+            try:
+                cfg = ConfigStore(root).snapshot()
+            except Exception:  # noqa: BLE001
+                pass
+            used_port = port or (cfg["server"]["port"] if cfg else 8848)
+            print(f"端口 {used_port} 用不了。多半是已经开着一个实例了"
+                  f"（看看任务栏/托盘里是不是已经有一个），或者被别的东西占用。")
+            print(f"换个端口：bili-live-wall.exe --port 9000"
+                  f"，或者改 config.json 里的 server.port。")
         return 1
 
     runtime.start()

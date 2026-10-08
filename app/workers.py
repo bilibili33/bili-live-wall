@@ -63,6 +63,10 @@ class StatusWorker(_Worker):
 
     label = "status"
 
+    def __init__(self, runtime):
+        super().__init__(runtime)
+        self._keyframe_seen: set[int] = set()   # 已经提示过"没有关键帧"的房间
+
     def tick(self) -> float:
         cfg = self.rt.config.snapshot()
         st = cfg["status"]
@@ -110,19 +114,47 @@ class StatusWorker(_Worker):
             room.status_ts = now          # 本次尝试时间
             room.status_ok_ts = now       # 本次成功时间
             room.status_error = ""
+            if room.keyframe:
+                self._keyframe_seen.add(room.uid)
+            elif room.is_live() and room.uid not in self._keyframe_seen:
+                # 直播中却没有关键帧，这是个重要信号，单独提一次
+                self._keyframe_seen.add(room.uid)
+                self.rt.state.log("warn", f"「{room.display_name}」在直播，但接口没有返回 keyframe"
+                                          f"（接口字段：{sorted(info)[:8]}...）")
             if room.is_live():
                 live_count += 1
+                self.rt.state.log(
+                    "debug",
+                    f"  房间 uid={room.uid} {room.display_name} 直播中 "
+                    f"人气={room.online} 关键帧={'有' if room.keyframe else '无'} "
+                    f"标题={room.title[:30]!r}",
+                )
+            else:
+                self.rt.state.log(
+                    "debug",
+                    f"  房间 uid={room.uid} {room.display_name} {room.status_text()} "
+                    f"关键帧={'有' if room.keyframe else '无'}",
+                )
             if room.is_live() and not was_live:
                 room.went_live_ts = now
                 self.rt.state.log("info", f"「{room.display_name}」开播了：{room.title}")
+                if room.keyframe:
+                    self.rt.state.log("debug", f"  关键帧地址：{room.keyframe}")
                 self.rt.capture_worker.wake()   # 开播立刻抓一张，不等下一个周期
             elif was_live and not room.is_live():
                 self.rt.state.log("info", f"「{room.display_name}」已下播")
 
+        for room in rooms:
+            if infos.get(room.uid) is None:
+                self.rt.state.log("warn", f"  房间 uid={room.uid} {room.display_name} "
+                                          f"没有被接口返回：{room.status_error}")
+
         self._log_problems(errors)
         self.rt.state.log(
             "debug",
-            f"状态刷新完成：{len(rooms)} 个房间，{live_count} 个在播，用时 {time.time() - started:.2f}s",
+            f"状态刷新完成：{len(rooms)} 个房间，{live_count} 个在播，"
+            f"用时 {time.time() - started:.2f}s，"
+            f"累计请求 {self.rt.bili.requests} 次 / 失败 {self.rt.bili.request_failures} 次",
         )
         self.rt.state.maybe_save()
         return interval
@@ -149,19 +181,29 @@ class CaptureWorker(_Worker):
             if r.live_status == 1 or not only_live
         ]
         if not candidates:
+            self.rt.state.log("debug", "截图：当前没有需要抓的房间"
+                                       f"（{'只抓直播中的' if only_live else '全部房间'}）")
             return interval
 
+        self.rt.state.log("debug", f"截图开始：{len(candidates)} 个候选房间")
         # 截图线程自己去取一次关键帧地址，不依赖状态线程的结果
         infos, errors = self.rt.bili.fetch_statuses([r.uid for r in candidates])
         self._log_problems([f"截图：{m}" for m in errors])
 
         shot_dir = self.rt.config.shot_dir
-        os.makedirs(shot_dir, exist_ok=True)
+        try:
+            os.makedirs(shot_dir, exist_ok=True)
+        except OSError as exc:
+            self.rt.state.log("error", f"截图目录建不出来：{shot_dir}（{exc}）"
+                                       f"—— 如果程序放在只读目录或 U 盘写保护里就会这样")
+            return interval
 
         ok = 0
+        same = 0
         for room in candidates:
             info = infos.get(room.uid)
             if info is None:
+                self.rt.state.log("warn", f"  截图跳过 uid={room.uid} {room.display_name}：接口未返回该房间")
                 self.rt.state.record_shot_error(room.uid, "接口未返回该房间")
                 continue
             try:
@@ -169,6 +211,7 @@ class CaptureWorker(_Worker):
             except (TypeError, ValueError):
                 status = 0
             if only_live and status != 1:
+                self.rt.state.log("debug", f"  截图跳过 uid={room.uid} {room.display_name}：已不在播")
                 self.rt.state.clear_shot(room.uid)
                 continue
 
@@ -176,17 +219,23 @@ class CaptureWorker(_Worker):
             if not url and not only_live:
                 url = (info.get("cover_from_user") or "").strip()
             if not url:
+                self.rt.state.log("warn", f"  截图跳过 uid={room.uid} {room.display_name}："
+                                          f"接口没给 keyframe 字段（live_status={status}）")
                 self.rt.state.record_shot_error(room.uid, "接口没有给出关键帧")
                 continue
 
             session = int(info.get("live_time") or 0) if status == 1 else 0
             path = os.path.join(shot_dir, f"{room.uid}.jpg")
+            self.rt.state.log("debug", f"  截图 uid={room.uid} {room.display_name} ← {url}")
+            started = time.time()
             try:
                 blob, mime = self.rt.bili.download(url, timeout=timeout)
             except BiliError as exc:
+                self.rt.state.log("error", f"  截图失败 uid={room.uid} {room.display_name}：{exc}")
                 self.rt.state.record_shot_error(room.uid, f"下载失败：{exc}")
                 continue
             if not blob:
+                self.rt.state.log("error", f"  截图失败 uid={room.uid} {room.display_name}：下载到空内容")
                 self.rt.state.record_shot_error(room.uid, "下载到空文件")
                 continue
 
@@ -204,13 +253,24 @@ class CaptureWorker(_Worker):
                         fh.write(blob)
                     os.replace(tmp, path)
                 except OSError as exc:
+                    self.rt.state.log("error", f"  截图写盘失败 uid={room.uid}：{path}（{exc}）")
                     self.rt.state.record_shot_error(room.uid, f"写盘失败：{exc}")
                     continue
                 if session != room.shot_session:
-                    self.rt.state.log("info", f"「{room.display_name}」抓到本场第一帧（{len(blob) // 1024} KB）")
+                    self.rt.state.log("info", f"「{room.display_name}」抓到本场第一帧"
+                                              f"（{len(blob) // 1024} KB，{mime}）")
+                else:
+                    self.rt.state.log("debug", f"  画面已更新（{len(blob) // 1024} KB，{mime}，"
+                                              f"{time.time() - started:.2f}s）")
+            else:
+                same += 1
+                self.rt.state.log("debug", f"  画面没变，跳过写盘（{len(blob) // 1024} KB，"
+                                          f"{time.time() - started:.2f}s）")
             self.rt.state.record_shot(room.uid, blob, mime, session, changed)
             ok += 1
 
-        self.rt.state.log("debug", f"截图完成：{ok}/{len(candidates)} 个房间")
+        self.rt.state.log("debug", f"截图完成：{ok}/{len(candidates)} 个房间取到画面，"
+                                   f"其中 {same} 个内容未变；累计请求 {self.rt.bili.requests} 次 / "
+                                   f"失败 {self.rt.bili.request_failures} 次")
         self.rt.state.maybe_save()
         return interval

@@ -14,10 +14,11 @@ a = Analysis(  # noqa: F821
     [os.path.join(HERE, "main.py")],
     pathex=[HERE],
     binaries=[],
-    # 网页和素材打进 _internal，用户数据（config.json / data）不在这里
+    # 网页、素材和内置 CA 包打进 _internal，用户数据（config.json / data）不在这里
     datas=[
         (os.path.join(HERE, "app", "web"), "app/web"),
         (os.path.join(HERE, "statics"), "statics"),
+        (os.path.join(HERE, "certs"), "certs"),
     ],
     hiddenimports=[],
     hookspath=[],
